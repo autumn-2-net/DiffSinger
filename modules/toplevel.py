@@ -68,7 +68,7 @@ class DiffSingerAcoustic(ParameterAdaptorModule, CategorizedModule):
         )
 
     def forward(
-            self, txt_tokens, mel2ph, f0, key_shift=None, speed=None,
+            self, txt_tokens, mel2ph, f0,promot, key_shift=None, speed=None,
             spk_embed_id=None, gt_mel=None, infer=True, **kwargs
     ) -> ShallowDiffusionOutput:
         condition = self.fs2(
@@ -86,7 +86,7 @@ class DiffSingerAcoustic(ParameterAdaptorModule, CategorizedModule):
                     src_mel = aux_mel_pred
             else:
                 aux_mel_pred = src_mel = None
-            mel_pred = self.diffusion(condition, src_spec=src_mel, infer=True)
+            mel_pred = self.diffusion(condition, src_spec=src_mel,promot=promot, infer=True)
             mel_pred *= ((mel2ph > 0).float()[:, :, None])
             return ShallowDiffusionOutput(aux_out=aux_mel_pred, diff_out=mel_pred)
         else:
@@ -106,7 +106,7 @@ class DiffSingerAcoustic(ParameterAdaptorModule, CategorizedModule):
 
             else:
                 aux_out = None
-                x_recon, noise = self.diffusion(condition, gt_spec=gt_mel, infer=False)
+                x_recon, noise = self.diffusion(condition, gt_spec=gt_mel,promot=promot, infer=False)
                 return ShallowDiffusionOutput(aux_out=aux_out, diff_out=(x_recon, noise))
 
 

@@ -10,20 +10,17 @@ import torch
 from torch import nn
 from tqdm import tqdm
 
-from modules.diffusion.Dunet2sax import DUnetXav2
-from modules.diffusion.unet import Unet
-from modules.diffusion.unet2 import UnetX
+
+from modules.diffusion.RC1_zerosort_unet import RC1_unet
+
 from modules.diffusion.unet2sa_natt_halfd import UnetXa_V
-from modules.diffusion.unet2sax import UnetXav2
-from modules.diffusion.unet3 import UnetX2
+
 from modules.diffusion.wavenet import WaveNet
-from modules.unet2sa import UnetXa
-from modules.unet2sax_self import UnetXav2sf
+
 from utils.hparams import hparams
 
 DIFF_DENOISERS = {
-    'wavenet': WaveNet, 'unet': Unet, 'unet2': UnetX, 'unet3': UnetX2, 'unet3a': UnetXa, 'unetav2': UnetXav2,
-    'unetav2self': UnetXav2sf, 'Dunetav2self': DUnetXav2, 'UnetXa_V': UnetXa_V
+    'wavenet': WaveNet, 'RC1_unet': RC1_unet, 'UnetXa_V': UnetXa_V
 }
 
 
@@ -151,8 +148,8 @@ class GaussianDiffusion(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x, t, cond):
-        noise_pred = self.denoise_fn(x, t, cond=cond)
+    def p_mean_variance(self, x, t, cond,pomt):
+        noise_pred = self.denoise_fn(x, t, cond=cond,pomt=pomt)
         x_recon = self.predict_start_from_noise(x, t=t, noise=noise_pred)
 
         x_recon.clamp_(-1., 1.)
@@ -161,27 +158,27 @@ class GaussianDiffusion(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance
 
     @torch.no_grad()
-    def p_sample(self, x, t, cond, clip_denoised=True, repeat_noise=False):
+    def p_sample(self, x, t, cond, pomt,clip_denoised=True, repeat_noise=False):
         b, *_, device = *x.shape, x.device
-        model_mean, _, model_log_variance = self.p_mean_variance(x=x, t=t, cond=cond)
+        model_mean, _, model_log_variance = self.p_mean_variance(x=x, t=t, cond=cond,pomt=pomt)
         noise = noise_like(x.shape, device, repeat_noise)
         # no noise when t == 0
         nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
         return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
 
     @torch.no_grad()
-    def p_sample_ddim(self, x, t, interval, cond):
+    def p_sample_ddim(self, x, t, interval, cond,pomt):
         a_t = extract(self.alphas_cumprod, t, x.shape)
         a_prev = extract(self.alphas_cumprod, torch.max(t - interval, torch.zeros_like(t)), x.shape)
 
-        noise_pred = self.denoise_fn(x, t, cond=cond)
+        noise_pred = self.denoise_fn(x, t, cond=cond,pomt=pomt)
         x_prev = a_prev.sqrt() * (
                 x / a_t.sqrt() + (((1 - a_prev) / a_prev).sqrt() - ((1 - a_t) / a_t).sqrt()) * noise_pred
         )
         return x_prev
 
     @torch.no_grad()
-    def p_sample_plms(self, x, t, interval, cond, clip_denoised=True, repeat_noise=False):
+    def p_sample_plms(self, x, t, interval, cond,pomt, clip_denoised=True, repeat_noise=False):
         """
         Use the PLMS method from
         [Pseudo Numerical Methods for Diffusion Models on Manifolds](https://arxiv.org/abs/2202.09778).
@@ -199,7 +196,7 @@ class GaussianDiffusion(nn.Module):
             return x_pred
 
         noise_list = self.noise_list
-        noise_pred = self.denoise_fn(x, t, cond=cond)
+        noise_pred = self.denoise_fn(x, t, cond=cond,pomt=pomt)
 
         if len(noise_list) == 0:
             x_pred = get_x_pred(x, noise_pred, t)
@@ -223,15 +220,15 @@ class GaussianDiffusion(nn.Module):
                 extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, cond, noise=None):
+    def p_losses(self, x_start, t, cond,promot, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        x_recon = self.denoise_fn(x_noisy, t, cond)
+        x_recon = self.denoise_fn(x_noisy, t, cond,pomt=promot)
 
         return x_recon, noise
 
-    def inference(self, cond, b=1, x_start=None, device=None):
+    def inference(self, cond,promot, b=1, x_start=None, device=None):
         depth = hparams.get('diff_depth', self.k_step)
         noise = torch.randn(b, self.num_feats, self.out_dims, cond.shape[2], device=device)
         if self.use_shallow_diffusion:
@@ -272,7 +269,7 @@ class GaussianDiffusion(nn.Module):
                     my_wrapper(self.denoise_fn),
                     noise_schedule,
                     model_type="noise",  # or "x_start" or "v" or "score"
-                    model_kwargs={"cond": cond}
+                    model_kwargs={"cond": cond,'pomt':promot}
                 )
 
                 # 3. Define dpm-solver and sample by singlestep DPM-Solver.
@@ -311,7 +308,7 @@ class GaussianDiffusion(nn.Module):
                     my_wrapper(self.denoise_fn),
                     noise_schedule,
                     model_type="noise",  # or "x_start" or "v" or "score"
-                    model_kwargs={"cond": cond}
+                    model_kwargs={"cond": cond,'pomt':promot}
                 )
 
                 # 3. Define uni_pc and sample by multistep UniPC.
@@ -338,7 +335,7 @@ class GaussianDiffusion(nn.Module):
                 ):
                     x = self.p_sample_plms(
                         x, torch.full((b,), i, device=device, dtype=torch.long),
-                        iteration_interval, cond=cond
+                        iteration_interval, cond=cond,pomt=promot
                     )
             elif algorithm == 'ddim':
                 iteration_interval = hparams['pndm_speedup']
@@ -348,18 +345,18 @@ class GaussianDiffusion(nn.Module):
                 ):
                     x = self.p_sample_ddim(
                         x, torch.full((b,), i, device=device, dtype=torch.long),
-                        iteration_interval, cond=cond
+                        iteration_interval, cond=cond,pomt=promot
                     )
             else:
                 raise NotImplementedError(algorithm)
         else:
             for i in tqdm(reversed(range(0, t_max)), desc='sample time step', total=t_max,
                           disable=not hparams['infer'], leave=False):
-                x = self.p_sample(x, torch.full((b,), i, device=device, dtype=torch.long), cond)
+                x = self.p_sample(x, torch.full((b,), i, device=device, dtype=torch.long), cond,pomt=promot)
         x = x.transpose(2, 3).squeeze(1)  # [B, F, M, T] => [B, T, M] or [B, F, T, M]
         return x
 
-    def forward(self, condition, gt_spec=None, src_spec=None, infer=True):
+    def forward(self, condition, promot,gt_spec=None, src_spec=None, infer=True):
         """
             conditioning diffusion, use fastspeech2 encoder output as the condition
         """
@@ -372,7 +369,7 @@ class GaussianDiffusion(nn.Module):
             if self.num_feats == 1:
                 spec = spec[:, None, :, :]  # [B, F=1, M, T]
             t = torch.randint(0, self.k_step, (b,), device=device).long()
-            return self.p_losses(spec, t, cond=cond)
+            return self.p_losses(spec, t, cond=cond,promot=promot)
         else:
             # src_spec: [B, T, M] or [B, F, T, M]
             if src_spec is not None:
@@ -381,7 +378,7 @@ class GaussianDiffusion(nn.Module):
                     spec = spec[:, None, :, :]
             else:
                 spec = None
-            x = self.inference(cond, b=b, x_start=spec, device=device)
+            x = self.inference(cond,promot=promot, b=b, x_start=spec, device=device)
             return self.denorm_spec(x)
 
     def norm_spec(self, x):

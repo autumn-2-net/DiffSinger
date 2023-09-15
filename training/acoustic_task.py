@@ -1,3 +1,5 @@
+import random
+
 import matplotlib
 import torch
 import torch.distributions
@@ -34,15 +36,25 @@ class AcousticDataset(BaseDataset):
     def collater(self, samples):
         batch = super().collater(samples)
 
+
         tokens = utils.collate_nd([s['tokens'] for s in samples], 0)
         f0 = utils.collate_nd([s['f0'] for s in samples], 0.0)
         mel2ph = utils.collate_nd([s['mel2ph'] for s in samples], 0)
         mel = utils.collate_nd([s['mel'] for s in samples], 0.0)
+        pml = len(mel[0])//3
+
+        pmcs=torch.randint(0,len(mel[0])-pml,(mel.shape[0],))
+        pmcse=pmcs+pml
+        cutpl=[]
+        for mess ,pms,pme in zip(mel,pmcs,pmcse):
+            cutpl.append(torch.unsqueeze(mess[pms:pme,:],0))
+        promc=torch.cat(cutpl,dim=0)
+
         batch.update({
             'tokens': tokens,
             'mel2ph': mel2ph,
             'mel': mel,
-            'f0': f0,
+            'f0': f0,'promot':promc
         })
         for v_name, v_pad in self.required_variances.items():
             batch[v_name] = utils.collate_nd([s[v_name] for s in samples], v_pad)
@@ -94,6 +106,7 @@ class AcousticTask(BaseTask):
         target = sample['mel']  # [B, T_s, M]
         mel2ph = sample['mel2ph']  # [B, T_s]
         f0 = sample['f0']
+        promot=sample['promot']
         variances = {
             v_name: sample[v_name]
             for v_name in self.required_variances
@@ -106,7 +119,7 @@ class AcousticTask(BaseTask):
         else:
             spk_embed_id = None
         output: ShallowDiffusionOutput = self.model(
-            txt_tokens, mel2ph=mel2ph, f0=f0, **variances,
+            txt_tokens, mel2ph=mel2ph, f0=f0,promot=promot, **variances,
             key_shift=key_shift, speed=speed, spk_embed_id=spk_embed_id,
             gt_mel=target, infer=infer
         )
