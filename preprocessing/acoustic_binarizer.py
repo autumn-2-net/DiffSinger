@@ -197,7 +197,7 @@ class AcousticBinarizer(BaseBinarizer):
                 'Fixed pitch shifting augmentation is not compatible with random pitch shifting.'
             assert len(targets) == len(set(targets)), \
                 'Fixed pitch shifting augmentation requires having no duplicate targets.'
-            assert hparams['use_spk_id'], 'Fixed pitch shifting augmentation requires use_spk_id == True.'
+            # assert hparams['use_spk_id'], 'Fixed pitch shifting augmentation requires use_spk_id == True.'
             assert hparams['num_spk'] >= min_num_spk, \
                 f'Fixed pitch shifting augmentation requires num_spk >= (1 + len(targets)) * (max(spk_ids) + 1).'
             assert scale < 1, 'Fixed pitch shifting augmentation requires scale < 1.'
