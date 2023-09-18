@@ -36,6 +36,99 @@ def main():
     pass
 
 
+
+def acousticbat(
+        proj: str,
+        exp: str,
+        ckpt: int,
+        spk: str,
+        out: str,
+        title: str,
+        num: int,
+        key: int,
+        gender: float,
+        seed: int,
+        depth: int,
+        speedup: int,
+        mel: bool,ppm,print_hparams,maxppm
+):
+    proj = pathlib.Path(proj).resolve()
+    name = proj.stem if not title else title
+    exp = find_exp(exp)
+    if out:
+        out = pathlib.Path(out)
+    else:
+        out = proj.parent
+
+    if gender is not None:
+        assert -1 <= gender <= 1, 'Gender must be in [-1, 1].'
+
+    with open(proj, 'r', encoding='utf-8') as f:
+        params = json.load(f)
+
+    if not isinstance(params, list):
+        params = [params]
+
+    if len(params) == 0:
+        print('The input file is empty.')
+        exit()
+
+    from utils.infer_utils import trans_key, parse_commandline_spk_mix
+
+    if key != 0:
+        params = trans_key(params, key)
+        key_suffix = '%+dkey' % key
+        if not title:
+            name += key_suffix
+        print(f'| key transition: {key:+d}')
+
+    sys.argv = [
+        sys.argv[0],
+        '--exp_name',
+        exp,
+        '--infer'
+    ]
+    from utils.hparams import set_hparams, hparams
+    set_hparams(print_hparams=print_hparams)
+
+    # Check for vocoder path
+    assert mel or (root_dir / hparams['vocoder_ckpt']).exists(), \
+        f'Vocoder ckpt \'{hparams["vocoder_ckpt"]}\' not found. ' \
+        f'Please put it to the checkpoints directory to run inference.'
+
+    if depth >= 0:
+        assert depth <= hparams['K_step'], f'Diffusion depth should not be larger than K_step {hparams["K_step"]}.'
+        hparams['diff_depth'] = depth
+    elif hparams.get('use_shallow_diffusion', False):
+        depth = hparams['diff_depth']
+    else:
+        depth = hparams['K_step']  # gaussian start (full depth diffusion)
+
+    if speedup > 0:
+        assert depth % speedup == 0, f'Acceleration ratio must be factor of diffusion depth {depth}.'
+        hparams['pndm_speedup'] = speedup
+
+    spk_mix = parse_commandline_spk_mix(spk) if hparams['use_spk_id'] and spk is not None else None
+    for param in params:
+        if gender is not None and hparams.get('use_key_shift_embed'):
+            param['gender'] = gender
+
+        if spk_mix is not None:
+            param['spk_mix'] = spk_mix
+
+    from inference.ds_acoustic import DiffSingerAcousticInfer
+    infer_ins = DiffSingerAcousticInfer(load_vocoder=not mel, ckpt_steps=ckpt)
+    print(f'| Model: {type(infer_ins.model)}')
+
+    try:
+        infer_ins.run_inference(
+            params, out_dir=out, title=name, num_runs=num,
+            spk_mix=spk_mix, seed=seed, save_mel=mel,ppm=ppm,maxppm=maxppm
+        )
+    except KeyboardInterrupt:
+        exit(-1)
+
+
 @main.command(help='Run DiffSinger acoustic model inference')
 @click.argument('proj', type=str, metavar='DS_FILE')
 @click.option('--exp', type=str, required=True, metavar='EXP', help='Selection of model')
@@ -50,6 +143,7 @@ def main():
 @click.option('--depth', type=int, required=False, default=-1, help='Shallow diffusion depth')
 @click.option('--speedup', type=int, required=False, default=0, help='Diffusion acceleration ratio')
 @click.option('--mel', is_flag=True, help='Save intermediate mel format instead of waveform')
+@click.option('--ppm', type=str, required=True, metavar='ppm', help='Selection of model')
 def acoustic(
         proj: str,
         exp: str,
@@ -63,7 +157,7 @@ def acoustic(
         seed: int,
         depth: int,
         speedup: int,
-        mel: bool
+        mel: bool,ppm
 ):
     proj = pathlib.Path(proj).resolve()
     name = proj.stem if not title else title
@@ -136,7 +230,7 @@ def acoustic(
     try:
         infer_ins.run_inference(
             params, out_dir=out, title=name, num_runs=num,
-            spk_mix=spk_mix, seed=seed, save_mel=mel
+            spk_mix=spk_mix, seed=seed, save_mel=mel,ppm=ppm
         )
     except KeyboardInterrupt:
         exit(-1)

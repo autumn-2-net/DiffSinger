@@ -3,7 +3,7 @@ base_config:
   - configs/acoustic.yaml
 
 task_cls: training.acoustic_task.AcousticTask
-num_spk: 36
+num_spk: 50
 speakers:
   - opencpop
   - aaa
@@ -11,11 +11,11 @@ speakers:
   - ssd
 spk_ids: []
 test_prefixes: [
-    '2044',
-    '2086',
-    '2092',
-    '2093',
-    '2100',
+    '2001000001',
+    '2001000010',
+    '2005000162',
+    '2007000237',
+    '2010000353','BanHuSha_000','HuaYueYao_007','ShaoNvAiErFa_005','BuRan_000','caocao_z_2',
 ]
 
 vocoder: NsfHifiGAN
